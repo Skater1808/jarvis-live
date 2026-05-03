@@ -7,6 +7,7 @@ No text conversion, no ElevenLabs — 100% native voice.
 import asyncio
 import json
 import os
+import sys
 import time
 from datetime import datetime
 
@@ -30,7 +31,23 @@ import quick_notes
 from quick_notes import add_quick_note
 
 # ── Config ─────────────────────────────────────────────────────────────
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+# Für PyInstaller-Bundle: Config liegt im Ordner der .exe, nicht im _MEIPASS
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+
+# Fallback: Wenn config.json nicht existiert, nutze config.example.json
+if not os.path.exists(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(BASE_DIR, "config.example.json")
+    print(f"[INFO] config.json nicht gefunden, nutze config.example.json stattdessen")
+    if not os.path.exists(CONFIG_PATH):
+        print(f"[ERROR] Weder config.json noch config.example.json gefunden in: {BASE_DIR}")
+        print(f"[ERROR] Bitte erstelle eine config.json im gleichen Ordner wie die Anwendung")
+        sys.exit(1)
+
 with open(CONFIG_PATH) as f:
     config = json.load(f)
 
