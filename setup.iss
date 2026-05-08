@@ -7,13 +7,13 @@
 ; 3. Öffne diese .iss Datei in Inno Setup und kompiliere (F9)
 
 #define MyAppName "JARVIS"
-#define MyAppVersion "3.0"
+#define MyAppVersion "1.1"
 #define MyAppPublisher "Skater1808"
 #define MyAppURL "https://github.com/Skater1808/gemini-live-jarvis"
 #define MyAppExeName "Jarvis.exe"
 
 [Setup]
-AppId={{JARVIS-3-0-GEMINI-LIVE-EMIL-2025}}
+AppId={{JARVIS-GEMINI-LIVE}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}

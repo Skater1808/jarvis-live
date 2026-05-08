@@ -22,6 +22,10 @@ from fastapi.staticfiles import StaticFiles
 # ── MCP Client ────────────────────────────────────────────────────────────
 import mcp_client
 
+# ── Skill System ───────────────────────────────────────────────────────────
+import skills
+from skills import skill_registry
+
 # ── Memory System ─────────────────────────────────────────────────────────
 import memory
 from memory import init_database, get_facts_for_prompt, get_conversation_context, remember_fact, save_conversation
@@ -73,12 +77,26 @@ MCP_TOOL_DECLARATIONS = []
 
 
 async def initialize_servers():
-    """Initialize all servers including MCP."""
+    """Initialize all servers including MCP and Skills."""
     global MCP_TOOL_DECLARATIONS
+    
+    # Initialize MCP
     await mcp_client.initialize_mcp()
     MCP_TOOL_DECLARATIONS = mcp_client.get_mcp_tools()
     if MCP_TOOL_DECLARATIONS:
         print(f"[jarvis] MCP tools loaded: {len(MCP_TOOL_DECLARATIONS)}", flush=True)
+    
+    # Load Skills
+    try:
+        await skill_registry.load_all_skills(config)
+        skill_count = len(skill_registry.get_all_tool_declarations())
+        if skill_count > 0:
+            print(f"[jarvis] Skills loaded: {skill_count} tools from {len(skill_registry._skills)} skills", flush=True)
+            # Print skill info
+            for info in skill_registry.get_skill_info():
+                print(f"  - {info['name']} v{info['version']}: {info['tool_count']} tools", flush=True)
+    except Exception as e:
+        print(f"[jarvis] WARNING: Could not load skills: {e}", flush=True)
 
 
 # ── FastAPI App with Lifespan ────────────────────────────────────────────
@@ -90,6 +108,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     await mcp_client.cleanup()
+    skill_registry.cleanup()
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
@@ -194,6 +213,9 @@ async def build_system_prompt(user_query: str = "") -> str:
         f"- 'Was ist X?' / 'Erklaer mir Y' -> search_wiki fuer Fakten aus Wikipedia. "
         f"- 'merke dir...' -> remember_fact fuer Langzeitgedaechtnis. "
         f"- 'Notiere...' / 'Zu den Notizen:' -> add_quick_note fuer schnelle Datei-Notizen. "
+        f"- 'rechne...' / 'wie viel ist...' -> calculator__calculate. "
+        f"- 'konvertiere...' -> calculator__convert_units. "
+        f"- 'system info' / 'wie ist mein pc' -> system__get_resource_usage. "
         f"- MCP tools (z.B. 'filesystem__read_file') -> fuer Dateisystem, Datenbanken, etc. "
         f"Antworte sonst NORMAL per Sprache, ohne Tools zu benutzen!"
     )
@@ -346,6 +368,10 @@ async def execute_tool(name: str, args: dict) -> str:
         elif mcp_client.is_mcp_tool(name):
             return await mcp_client.execute_mcp_tool(name, args)
 
+        # Skill tools (prefixed with skill name)
+        elif skill_registry.is_skill_tool(name):
+            return await skill_registry.execute_tool(name, args)
+
     except Exception as e:
         return f"Fehler: {e}"
     return "Unbekannte Funktion."
@@ -353,8 +379,9 @@ async def execute_tool(name: str, args: dict) -> str:
 
 # ── Gemini Live Setup Message ────────────────────────────────────────────
 def build_setup_msg(system_prompt: str) -> str:
-    # Combine built-in tools with MCP tools
-    all_tools = FUNCTION_DECLARATIONS + MCP_TOOL_DECLARATIONS
+    # Combine built-in tools with MCP tools and Skills
+    skill_tools = skill_registry.get_all_tool_declarations()
+    all_tools = FUNCTION_DECLARATIONS + MCP_TOOL_DECLARATIONS + skill_tools
 
     return json.dumps({
         "setup": {

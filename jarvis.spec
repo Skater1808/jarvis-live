@@ -11,6 +11,7 @@ a = Analysis(
     datas=[
         ('frontend', 'frontend'),           # Frontend-Dateien (HTML, CSS, JS)
         ('config.example.json', '.'),       # Beispiel-Config als Fallback
+        ('skills', 'skills'),               # Skill-Dateien (.py und .zip)
     ],
     hiddenimports=[
         'google.genai',
@@ -42,6 +43,8 @@ a = Analysis(
         'quick_notes',
         'mcp_client',
         'wiki_tools',
+        'skills',
+        'psutil',
         'datetime',
         'json',
         'os',
@@ -49,6 +52,9 @@ a = Analysis(
         'time',
         'asyncio',
         'contextlib',
+        'math',
+        'platform',
+        'pathlib',
     ],
     hookspath=[],
     hooksconfig={},
