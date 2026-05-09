@@ -339,6 +339,11 @@ function initUpdateTab() {
     const installBtn = document.getElementById('install-update-btn');
     const rollbackBtn = document.getElementById('rollback-btn');
     
+    // Git sync buttons
+    const gitCheckBtn = document.getElementById('git-check-btn');
+    const gitSyncBtn = document.getElementById('git-sync-btn');
+    const gitStatusBtn = document.getElementById('git-status-btn');
+    
     if (checkBtn) {
         checkBtn.addEventListener('click', checkForUpdates);
     }
@@ -349,6 +354,19 @@ function initUpdateTab() {
     
     if (rollbackBtn) {
         rollbackBtn.addEventListener('click', rollbackUpdate);
+    }
+    
+    // Git sync event listeners
+    if (gitCheckBtn) {
+        gitCheckBtn.addEventListener('click', checkGitChanges);
+    }
+    
+    if (gitSyncBtn) {
+        gitSyncBtn.addEventListener('click', syncGitChanges);
+    }
+    
+    if (gitStatusBtn) {
+        gitStatusBtn.addEventListener('click', showGitStatus);
     }
 }
 
@@ -458,6 +476,12 @@ function updateUIFromToolResponse(toolName, result) {
     const changelogContainer = document.getElementById('changelog-container');
     const changelogText = document.getElementById('changelog-text');
     
+    // Git elements
+    const gitStatusText = document.getElementById('git-status-text');
+    const gitCheckBtn = document.getElementById('git-check-btn');
+    const gitSyncBtn = document.getElementById('git-sync-btn');
+    const gitStatusBtn = document.getElementById('git-status-btn');
+    
     if (toolName === 'update__check') {
         const checkBtn = document.getElementById('check-update-btn');
         checkBtn.disabled = false;
@@ -516,6 +540,29 @@ function updateUIFromToolResponse(toolName, result) {
             statusText.textContent = 'Rollback fehlgeschlagen';
             showNotification('Rollback fehlgeschlagen', 'error');
         }
+    } else if (toolName === 'update__git_check') {
+        gitCheckBtn.disabled = false;
+        gitStatusText.textContent = result;
+        
+        if (result.includes('Git-Änderungen gefunden')) {
+            gitSyncBtn.disabled = false;
+            showNotification('Git-Änderungen verfügbar', 'info');
+        } else {
+            gitSyncBtn.disabled = true;
+        }
+    } else if (toolName === 'update__git_sync') {
+        gitSyncBtn.disabled = false;
+        gitCheckBtn.disabled = false;
+        gitStatusText.textContent = result;
+        
+        if (result.includes('erfolgreich')) {
+            showNotification('Git-Synchronisation erfolgreich!', 'success');
+        } else {
+            showNotification('Git-Synchronisation fehlgeschlagen', 'error');
+        }
+    } else if (toolName === 'update__git_status') {
+        gitStatusBtn.disabled = false;
+        gitStatusText.textContent = result;
     }
 }
 
@@ -564,6 +611,93 @@ function showNotification(message, type = 'info') {
     }, 3000);
 }
 
+async function checkGitChanges() {
+    const gitStatusText = document.getElementById('git-status-text');
+    const gitCheckBtn = document.getElementById('git-check-btn');
+    const gitSyncBtn = document.getElementById('git-sync-btn');
+    
+    try {
+        gitStatusText.textContent = 'Prüfe Git-Änderungen...';
+        gitCheckBtn.disabled = true;
+        gitSyncBtn.disabled = true;
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const request = {
+                type: 'tool_call',
+                tool: 'update__git_check',
+                args: {}
+            };
+            ws.send(JSON.stringify(request));
+        } else {
+            gitStatusText.textContent = 'Nicht verbunden';
+            gitCheckBtn.disabled = false;
+        }
+        
+    } catch (error) {
+        console.error('[git] Check error:', error);
+        gitStatusText.textContent = 'Fehler bei der Git-Prüfung';
+        gitCheckBtn.disabled = false;
+    }
+}
+
+async function syncGitChanges() {
+    const gitStatusText = document.getElementById('git-status-text');
+    const gitSyncBtn = document.getElementById('git-sync-btn');
+    
+    if (!confirm('Git-Änderungen synchronisieren? Es wird ein Backup erstellt.')) {
+        return;
+    }
+    
+    try {
+        gitStatusText.textContent = 'Synchronisiere Git...';
+        gitSyncBtn.disabled = true;
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const request = {
+                type: 'tool_call',
+                tool: 'update__git_sync',
+                args: { confirm: 'yes' }
+            };
+            ws.send(JSON.stringify(request));
+        } else {
+            gitStatusText.textContent = 'Nicht verbunden';
+            gitSyncBtn.disabled = false;
+        }
+        
+    } catch (error) {
+        console.error('[git] Sync error:', error);
+        gitStatusText.textContent = 'Fehler bei der Git-Synchronisation';
+        gitSyncBtn.disabled = false;
+    }
+}
+
+async function showGitStatus() {
+    const gitStatusText = document.getElementById('git-status-text');
+    const gitStatusBtn = document.getElementById('git-status-btn');
+    
+    try {
+        gitStatusText.textContent = 'Lade Git-Status...';
+        gitStatusBtn.disabled = true;
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const request = {
+                type: 'tool_call',
+                tool: 'update__git_status',
+                args: {}
+            };
+            ws.send(JSON.stringify(request));
+        } else {
+            gitStatusText.textContent = 'Nicht verbunden';
+            gitStatusBtn.disabled = false;
+        }
+        
+    } catch (error) {
+        console.error('[git] Status error:', error);
+        gitStatusText.textContent = 'Fehler beim Laden des Git-Status';
+        gitStatusBtn.disabled = false;
+    }
+}
+
 async function loadUpdateStatus() {
     // Load current update status
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -580,6 +714,16 @@ async function loadUpdateStatus() {
         const request = {
             type: 'tool_call',
             tool: 'update__list_backups',
+            args: {}
+        };
+        ws.send(JSON.stringify(request));
+    }
+    
+    // Load Git status
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const request = {
+            type: 'tool_call',
+            tool: 'update__git_status',
             args: {}
         };
         ws.send(JSON.stringify(request));

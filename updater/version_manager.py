@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime
 import aiohttp
 from packaging import version
+from .git_sync import GitSync
 
 class VersionManager:
     """Manages version checking and GitHub Releases API integration."""
@@ -27,6 +28,9 @@ class VersionManager:
         self.version_file = os.path.join(base_dir, "version.json")
         self.github_repo = "Skater1808/jarvis-live"
         self.github_api_url = f"https://api.github.com/repos/{self.github_repo}/releases"
+        
+        # Initialize Git sync
+        self.git_sync = GitSync(base_dir)
         
     def get_current_version(self) -> str:
         """Get current version from version.json or return default."""
@@ -193,3 +197,117 @@ class VersionManager:
         except Exception as e:
             print(f"[updater] Error formatting changelog: {e}")
             return "Fehler beim Formatieren der Änderungen."
+    
+    async def check_git_changes(self, remote = 'origin', branch = 'main'):
+        """
+        Check for Git repository changes.
+        
+        Returns:
+            Tuple of (has_changes, sync_info) where sync_info contains details about changes
+        """
+        try:
+            if not self.git_sync.is_available():
+                return False, {"error": "Git nicht verfügbar"}
+            
+            sync_status = self.git_sync.get_sync_status()
+            
+            if not sync_status.get('available', False):
+                return False, sync_status
+            
+            has_changes = sync_status.get('has_changes', False)
+            
+            if has_changes:
+                # Get additional info about changes
+                changed_files = sync_status.get('changed_files', [])
+                remote_info = sync_status.get('remote_info', {})
+                
+                sync_info = {
+                    'has_changes': True,
+                    'changed_files': changed_files,
+                    'changed_files_count': len(changed_files),
+                    'remote_commit': sync_status.get('remote_commit'),
+                    'current_commit': sync_status.get('current_commit'),
+                    'remote_info': remote_info,
+                    'changes_summary': self.git_sync.format_changes_summary(changed_files)
+                }
+                
+                return True, sync_info
+            else:
+                return False, {'has_changes': False}
+                
+        except Exception as e:
+            print(f"[updater] Error checking Git changes: {e}")
+            return False, {"error": str(e)}
+    
+    async def sync_git_changes(self, remote = 'origin', branch = 'main'):
+        """
+        Synchronize Git repository changes.
+        
+        Returns:
+            Tuple of (success, sync_info) with details about the sync operation
+        """
+        try:
+            if not self.git_sync.is_available():
+                return False, {"error": "Git nicht verfügbar"}
+            
+            # Check if there are changes first
+            has_changes, sync_info = await self.check_git_changes(remote, branch)
+            
+            if not has_changes:
+                return True, {"message": "Keine Änderungen zum Synchronisieren"}
+            
+            # Pull changes
+            success = self.git_sync.pull_changes(remote, branch)
+            
+            if success:
+                # Save sync state
+                self.git_sync.save_sync_state({
+                    'last_sync_commit': sync_info.get('remote_commit'),
+                    'sync_type': 'git_pull'
+                })
+                
+                return True, {
+                    "message": "Git-Änderungen erfolgreich synchronisiert",
+                    "files_updated": sync_info.get('changed_files_count', 0),
+                    "commit": sync_info.get('remote_commit')
+                }
+            else:
+                return False, {"error": "Git Pull fehlgeschlagen"}
+                
+        except Exception as e:
+            print(f"[updater] Error syncing Git changes: {e}")
+            return False, {"error": str(e)}
+    
+    async def check_all_updates(self, channel = "stable", check_git = True):
+        """
+        Check for both GitHub releases and Git changes.
+        
+        Returns:
+            Dict with information about available updates from both sources
+        """
+        result = {
+            'github_release': None,
+            'git_changes': None,
+            'has_updates': False
+        }
+        
+        # Check GitHub releases
+        try:
+            github_available, github_info = await self.check_for_updates(channel)
+            if github_available:
+                result['github_release'] = github_info
+                result['has_updates'] = True
+        except Exception as e:
+            print(f"[updater] Error checking GitHub releases: {e}")
+        
+        # Check Git changes
+        if check_git:
+            try:
+                git_has_changes, git_info = await self.check_git_changes()
+                if git_has_changes:
+                    result['git_changes'] = git_info
+                    result['has_updates'] = True
+            except Exception as e:
+                print(f"[updater] Error checking Git changes: {e}")
+        
+        return result

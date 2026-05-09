@@ -20,6 +20,10 @@
     "backup_count": 5,
     "check_interval_hours": 24,
     "notify_on_update": true,
-    "voice_announcements": true
+    "voice_announcements": true,
+    "git_sync_enabled": true,
+    "git_remote": "origin",
+    "git_branch": "main",
+    "git_auto_sync": false
   }
 }

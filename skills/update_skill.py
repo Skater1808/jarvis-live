@@ -113,6 +113,55 @@ class Skill(BaseSkill):
             {},
             self._create_backup
         )
+        
+        # Git sync tools
+        self.register_tool(
+            "git_check",
+            "Check for Git repository changes",
+            {
+                "remote": {
+                    "type": "STRING",
+                    "description": "Git remote name (default: origin)",
+                    "default": "origin"
+                },
+                "branch": {
+                    "type": "STRING", 
+                    "description": "Git branch name (default: main)",
+                    "default": "main"
+                }
+            },
+            self._git_check_changes
+        )
+        
+        self.register_tool(
+            "git_sync",
+            "Synchronize Git repository changes",
+            {
+                "remote": {
+                    "type": "STRING",
+                    "description": "Git remote name (default: origin)",
+                    "default": "origin"
+                },
+                "branch": {
+                    "type": "STRING",
+                    "description": "Git branch name (default: main)", 
+                    "default": "main"
+                },
+                "confirm": {
+                    "type": "STRING",
+                    "description": "Type 'yes' to confirm synchronization",
+                    "enum": ["yes"]
+                }
+            },
+            self._git_sync_changes
+        )
+        
+        self.register_tool(
+            "git_status",
+            "Show Git synchronization status",
+            {},
+            self._git_status
+        )
     
     async def _check_updates(self, channel = "stable"):
         """Check for available updates."""
@@ -335,12 +384,137 @@ class Skill(BaseSkill):
         except Exception as e:
             return f"Fehler beim Erstellen des Backups: {e}"
     
+    async def _git_check_changes(self, remote = "origin", branch = "main"):
+        """Check for Git repository changes."""
+        try:
+            has_changes, sync_info = await self.version_manager.check_git_changes(remote, branch)
+            
+            if not has_changes:
+                if "error" in sync_info:
+                    return f"Git-Prüfung fehlgeschlagen: {sync_info['error']}"
+                else:
+                    return "Keine Git-Änderungen gefunden. Repository ist aktuell."
+            
+            # Format response with changes info
+            response = "Git-Änderungen gefunden!\n\n"
+            response += f"Geänderte Dateien: {sync_info.get('changed_files_count', 0)}\n"
+            
+            remote_info = sync_info.get('remote_info', {})
+            if remote_info:
+                response += f"Remote-Commit: {remote_info.get('hash', 'Unknown')[:8]}\n"
+                response += f"Autor: {remote_info.get('author', 'Unknown')}\n"
+                response += f"Nachricht: {remote_info.get('message', 'No message')}\n"
+            
+            changes_summary = sync_info.get('changes_summary', '')
+            if changes_summary and changes_summary != "Keine Änderungen gefunden.":
+                response += f"\n{changes_summary}"
+            
+            response += f"\n\nNutze 'update__git_sync' mit confirm='yes' zum Synchronisieren."
+            return response
+            
+        except Exception as e:
+            return f"Fehler bei der Git-Prüfung: {e}"
+    
+    async def _git_sync_changes(self, remote = "origin", branch = "main", confirm = "yes"):
+        """Synchronize Git repository changes."""
+        try:
+            if confirm != "yes":
+                return "Bitte bestätige mit confirm='yes' zum Synchronisieren."
+            
+            # First check if there are changes
+            has_changes, sync_info = await self.version_manager.check_git_changes(remote, branch)
+            
+            if not has_changes:
+                if "error" in sync_info:
+                    return f"Git-Synchronisation fehlgeschlagen: {sync_info['error']}"
+                else:
+                    return "Keine Änderungen zum Synchronisieren."
+            
+            # Create backup before syncing
+            print("[update] Creating backup before Git sync...")
+            backup_path = self.backup_manager.create_backup()
+            if not backup_path:
+                return "Backup fehlgeschlagen - Git-Synchronisation abgebrochen."
+            
+            # Perform sync
+            success, result = await self.version_manager.sync_git_changes(remote, branch)
+            
+            if success:
+                response = "Git-Synchronisation erfolgreich!\n\n"
+                response += f"Backup erstellt: {os.path.basename(backup_path)}\n"
+                response += f"Dateien aktualisiert: {result.get('files_updated', 0)}\n"
+                response += f"Commit: {result.get('commit', 'Unknown')[:8]}\n"
+                response += f"\nRepository ist jetzt aktuell."
+                return response
+            else:
+                return f"Git-Synchronisation fehlgeschlagen: {result.get('error', 'Unknown error')}"
+                
+        except Exception as e:
+            return f"Fehler bei der Git-Synchronisation: {e}"
+    
+    async def _git_status(self):
+        """Show Git synchronization status."""
+        try:
+            sync_status = self.version_manager.git_sync.get_sync_status()
+            
+            if not sync_status.get('available', False):
+                return f"Git-Status: {sync_status.get('error', 'Nicht verfügbar')}"
+            
+            response = "Git-Synchronisationsstatus\n"
+            response += "========================\n"
+            
+            current_commit = sync_status.get('current_commit', '')
+            remote_commit = sync_status.get('remote_commit', '')
+            
+            response += f"Aktueller Commit: {current_commit[:8] if current_commit else 'Unknown'}\n"
+            response += f"Remote Commit: {remote_commit[:8] if remote_commit else 'Unknown'}\n"
+            
+            has_changes = sync_status.get('has_changes', False)
+            response += f"Änderungen vorhanden: {'Ja' if has_changes else 'Nein'}\n"
+            
+            if has_changes:
+                changed_count = sync_status.get('changed_files_count', 0)
+                response += f"Geänderte Dateien: {changed_count}\n"
+            
+            last_sync = sync_status.get('last_sync')
+            if last_sync:
+                from datetime import datetime
+                try:
+                    sync_time = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
+                    response += f"Letzte Synchronisation: {sync_time.strftime('%d.%m.%Y %H:%M')}\n"
+                except:
+                    response += f"Letzte Synchronisation: {last_sync}\n"
+            
+            # Add current branch info
+            try:
+                branch_result = self.version_manager.git_sync._run_git_command(['branch', '--show-current'])
+                if branch_result.returncode == 0:
+                    current_branch = branch_result.stdout.strip()
+                    response += f"Aktueller Branch: {current_branch}\n"
+            except:
+                pass
+            
+            return response
+            
+        except Exception as e:
+            return f"Fehler beim Abrufen des Git-Status: {e}"
+    
     async def scheduled_check(self):
         """Background task for scheduled update checks."""
         try:
             if self.config.get("auto_check", True):
-                # Check for updates in background
-                await self._check_updates(self.config.get("channel", "stable"))
+                # Check for both GitHub releases and Git changes
+                all_updates = await self.version_manager.check_all_updates(
+                    self.config.get("channel", "stable"),
+                    check_git=self.config.get("git_sync_enabled", True)
+                )
+                
+                if all_updates.get('has_updates', False):
+                    print("[update] Updates available:")
+                    if all_updates.get('github_release'):
+                        print(f"  - GitHub Release: {all_updates['github_release']['version']}")
+                    if all_updates.get('git_changes'):
+                        print(f"  - Git Changes: {all_updates['git_changes']['changed_files_count']} files")
                 
         except Exception as e:
             print(f"[update] Scheduled check error: {e}")

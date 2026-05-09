@@ -392,6 +392,49 @@ body {
     font-size: 11px;
 }
 
+/* Git Sync Styles */
+#git-controls {
+    background: #0d1a2a;
+    border: 1px solid #1a3050;
+    border-radius: 4px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+#git-controls h4 {
+    color: #5a7090;
+    font-size: 14px;
+    margin: 0 0 10px 0;
+}
+
+.git-status-box {
+    background: #0a1520;
+    border: 1px solid #1a3050;
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+#git-status-text {
+    color: #6a80a0;
+    font-size: 12px;
+    white-space: pre-line;
+}
+
+#git-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+#git-buttons .update-btn {
+    min-width: 110px;
+    font-size: 11px;
+    padding: 8px 12px;
+}
+
 /* Responsive adjustments */
 @media (max-width: 600px) {
     #update-container {
@@ -400,6 +443,10 @@ body {
     }
     
     #update-controls {
+        flex-direction: column;
+    }
+    
+    #git-buttons {
         flex-direction: column;
     }
     
