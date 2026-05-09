@@ -258,42 +258,7 @@ function connect() {
         setOrb('idle');
     };
 
-    ws.onmessage = (evt) => {
-        const msg = JSON.parse(evt.data);
-
-        switch (msg.type) {
-            case 'audio':
-                console.log(`[ws] Received audio chunk: ${msg.data?.length} chars`);
-                scheduleChunk(msg.data);
-                break;
-
-            case 'turn_complete':
-                // Jarvis finished speaking — small grace period then clear flag
-                setTimeout(() => {
-                    if (nextPlayTime <= (audioCtxOut?.currentTime ?? 0) + 0.15) {
-                        jarvisTalking = false;
-                        hasSpokenInTurn = false;  // Reset VAD for next turn
-                        if (micActive) setOrb('listening');
-                    }
-                }, 400);
-                break;
-
-            case 'interrupted':
-                // User interrupted Jarvis — stop queued audio immediately
-                nextPlayTime  = audioCtxOut?.currentTime ?? 0;
-                jarvisTalking = false;
-                break;
-
-            case 'status':
-                status(msg.text);
-                break;
-
-            case 'error':
-                status('Fehler: ' + msg.text);
-                setOrb('idle');
-                break;
-        }
-    };
+    ws.onmessage = handleWebSocketMessage;
 
     ws.onclose = () => {
         status('Verbindung getrennt – reconnect...');
@@ -336,5 +301,372 @@ function addLine(role, text) {
     while (transcEl.children.length > 40) transcEl.removeChild(transcEl.firstChild);
 }
 
+// ── Tab Switching ───────────────────────────────────────────────────────────
+function initTabs() {
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+    
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.dataset.tab;
+            
+            // Update button states
+            tabBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            // Update content visibility
+            tabContents.forEach(content => {
+                content.classList.remove('active');
+                if (content.id === `${targetTab}-tab`) {
+                    content.classList.add('active');
+                }
+            });
+            
+            // Load update data when switching to update tab
+            if (targetTab === 'update') {
+                loadUpdateStatus();
+            }
+        });
+    });
+}
+
+// ── Update Tab Functionality ─────────────────────────────────────────────────
+let updateAvailable = false;
+let currentReleaseInfo = null;
+
+function initUpdateTab() {
+    const checkBtn = document.getElementById('check-update-btn');
+    const installBtn = document.getElementById('install-update-btn');
+    const rollbackBtn = document.getElementById('rollback-btn');
+    
+    if (checkBtn) {
+        checkBtn.addEventListener('click', checkForUpdates);
+    }
+    
+    if (installBtn) {
+        installBtn.addEventListener('click', installUpdate);
+    }
+    
+    if (rollbackBtn) {
+        rollbackBtn.addEventListener('click', rollbackUpdate);
+    }
+}
+
+async function checkForUpdates() {
+    const statusText = document.getElementById('update-status-text');
+    const checkBtn = document.getElementById('check-update-btn');
+    
+    try {
+        statusText.textContent = 'Prüfe auf Updates...';
+        checkBtn.disabled = true;
+        
+        // Send update check request via WebSocket
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const request = {
+                type: 'tool_call',
+                tool: 'update__check',
+                args: { channel: 'stable' }
+            };
+            ws.send(JSON.stringify(request));
+        } else {
+            statusText.textContent = 'Nicht verbunden - bitte warten';
+            checkBtn.disabled = false;
+        }
+        
+    } catch (error) {
+        console.error('[update] Check error:', error);
+        statusText.textContent = 'Fehler bei der Prüfung';
+        checkBtn.disabled = false;
+    }
+}
+
+async function installUpdate() {
+    const statusText = document.getElementById('update-status-text');
+    const installBtn = document.getElementById('install-update-btn');
+    
+    if (!updateAvailable || !currentReleaseInfo) {
+        statusText.textContent = 'Kein Update verfügbar';
+        return;
+    }
+    
+    // Confirm installation
+    if (!confirm(`Update auf Version ${currentReleaseInfo.version} installieren?`)) {
+        return;
+    }
+    
+    try {
+        statusText.textContent = 'Installiere Update...';
+        installBtn.disabled = true;
+        
+        // Show progress
+        showProgress('Installiere...', 0);
+        
+        // Send install request via WebSocket
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const request = {
+                type: 'tool_call',
+                tool: 'update__install',
+                args: { confirm: 'yes' }
+            };
+            ws.send(JSON.stringify(request));
+        } else {
+            statusText.textContent = 'Nicht verbunden';
+            installBtn.disabled = false;
+            hideProgress();
+        }
+        
+    } catch (error) {
+        console.error('[update] Install error:', error);
+        statusText.textContent = 'Installationsfehler';
+        installBtn.disabled = false;
+        hideProgress();
+    }
+}
+
+async function rollbackUpdate() {
+    const statusText = document.getElementById('update-status-text');
+    
+    if (!confirm('Zum letzten Backup zurückrollen?')) {
+        return;
+    }
+    
+    try {
+        statusText.textContent = 'Rollback wird durchgeführt...';
+        
+        // Send rollback request via WebSocket
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const request = {
+                type: 'tool_call',
+                tool: 'update__rollback',
+                args: {}
+            };
+            ws.send(JSON.stringify(request));
+        } else {
+            statusText.textContent = 'Nicht verbunden';
+        }
+        
+    } catch (error) {
+        console.error('[update] Rollback error:', error);
+        statusText.textContent = 'Rollback fehlgeschlagen';
+    }
+}
+
+function updateUIFromToolResponse(toolName, result) {
+    const statusText = document.getElementById('update-status-text');
+    const installBtn = document.getElementById('install-update-btn');
+    const availableVersionEl = document.getElementById('available-version');
+    const changelogContainer = document.getElementById('changelog-container');
+    const changelogText = document.getElementById('changelog-text');
+    
+    if (toolName === 'update__check') {
+        const checkBtn = document.getElementById('check-update-btn');
+        checkBtn.disabled = false;
+        
+        if (result.includes('Update verfügbar')) {
+            updateAvailable = true;
+            
+            // Extract version info from result
+            const versionMatch = result.match(/Neue Version: ([\d.]+)/);
+            if (versionMatch) {
+                currentReleaseInfo = { version: versionMatch[1] };
+                availableVersionEl.textContent = versionMatch[1];
+                availableVersionEl.style.color = '#22d468';
+            }
+            
+            // Extract changelog
+            const changelogMatch = result.match(/Änderungen:\n([\s\S]+)/);
+            if (changelogMatch) {
+                changelogText.textContent = changelogMatch[1].trim();
+                changelogContainer.style.display = 'block';
+            }
+            
+            statusText.textContent = 'Update verfügbar';
+            installBtn.disabled = false;
+        } else {
+            updateAvailable = false;
+            currentReleaseInfo = null;
+            availableVersionEl.textContent = 'Keine';
+            availableVersionEl.style.color = '#4a6080';
+            changelogContainer.style.display = 'none';
+            statusText.textContent = 'Aktuell';
+            installBtn.disabled = true;
+        }
+    } else if (toolName === 'update__install') {
+        hideProgress();
+        if (result.includes('erfolgreich')) {
+            statusText.textContent = 'Update erfolgreich - bitte neustarten';
+            updateAvailable = false;
+            availableVersionEl.textContent = 'Keine';
+            installBtn.disabled = true;
+            
+            // Show success notification
+            showNotification('Update erfolgreich installiert!', 'success');
+        } else {
+            statusText.textContent = 'Installation fehlgeschlagen';
+            installBtn.disabled = false;
+            
+            // Show error notification
+            showNotification('Installation fehlgeschlagen', 'error');
+        }
+    } else if (toolName === 'update__rollback') {
+        if (result.includes('erfolgreich')) {
+            statusText.textContent = 'Rollback erfolgreich';
+            showNotification('Rollback erfolgreich', 'success');
+        } else {
+            statusText.textContent = 'Rollback fehlgeschlagen';
+            showNotification('Rollback fehlgeschlagen', 'error');
+        }
+    }
+}
+
+function showProgress(text, percent) {
+    const progressContainer = document.getElementById('progress-container');
+    const progressText = document.getElementById('progress-text');
+    const progressPercent = document.getElementById('progress-percent');
+    const progressFill = document.getElementById('progress-fill');
+    
+    progressContainer.style.display = 'block';
+    progressText.textContent = text;
+    progressPercent.textContent = `${percent}%`;
+    progressFill.style.width = `${percent}%`;
+}
+
+function hideProgress() {
+    const progressContainer = document.getElementById('progress-container');
+    progressContainer.style.display = 'none';
+}
+
+function showNotification(message, type = 'info') {
+    // Create a simple notification (could be enhanced with a proper notification system)
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${type === 'success' ? '#22d468' : type === 'error' ? '#d42222' : '#3a80d4'};
+        color: white;
+        padding: 12px 20px;
+        border-radius: 4px;
+        z-index: 1000;
+        font-size: 13px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+        }
+    }, 3000);
+}
+
+async function loadUpdateStatus() {
+    // Load current update status
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const request = {
+            type: 'tool_call',
+            tool: 'update__status',
+            args: {}
+        };
+        ws.send(JSON.stringify(request));
+    }
+    
+    // Load backup list
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const request = {
+            type: 'tool_call',
+            tool: 'update__list_backups',
+            args: {}
+        };
+        ws.send(JSON.stringify(request));
+    }
+}
+
+function updateBackupList(result) {
+    const backupList = document.getElementById('backup-list');
+    
+    if (result.includes('Keine Backups')) {
+        backupList.innerHTML = '<div style="color: #4a6080;">Keine Backups verfügbar</div>';
+        return;
+    }
+    
+    // Parse backup list from result
+    const lines = result.split('\n');
+    let html = '';
+    
+    for (const line of lines) {
+        if (line.includes('.zip')) {
+            const match = line.match(/(\d+\.\s+backup_[^.]+\.zip)/);
+            if (match) {
+                const filename = match[1];
+                html += `<div class="backup-item">
+                    <span class="backup-name">${filename}</span>
+                </div>`;
+            }
+        }
+    }
+    
+    backupList.innerHTML = html || '<div style="color: #4a6080;">Keine Backups gefunden</div>';
+}
+
+// ── Enhanced WebSocket Message Handling ─────────────────────────────────────
+const originalOnMessage = ws?.onmessage;
+
+function handleWebSocketMessage(evt) {
+    const msg = JSON.parse(evt.data);
+
+    switch (msg.type) {
+        case 'audio':
+            console.log(`[ws] Received audio chunk: ${msg.data?.length} chars`);
+            scheduleChunk(msg.data);
+            break;
+
+        case 'turn_complete':
+            setTimeout(() => {
+                if (nextPlayTime <= (audioCtxOut?.currentTime ?? 0) + 0.15) {
+                    jarvisTalking = false;
+                    hasSpokenInTurn = false;
+                    if (micActive) setOrb('listening');
+                }
+            }, 400);
+            break;
+
+        case 'interrupted':
+            nextPlayTime = audioCtxOut?.currentTime ?? 0;
+            jarvisTalking = false;
+            break;
+
+        case 'status':
+            status(msg.text);
+            break;
+
+        case 'error':
+            status('Fehler: ' + msg.text);
+            setOrb('idle');
+            break;
+            
+        case 'tool_response':
+            // Handle tool responses for update functionality
+            if (msg.tool_name) {
+                updateUIFromToolResponse(msg.tool_name, msg.result);
+                
+                // Handle backup list response
+                if (msg.tool_name === 'update__list_backups') {
+                    updateBackupList(msg.result);
+                }
+            }
+            break;
+    }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    initTabs();
+    initUpdateTab();
+});
+
 connect();

@@ -9,11 +9,68 @@
 <body>
     <div id="app">
         <div id="header">J.A.R.V.I.S.</div>
-        <div id="orb-container">
-            <div id="orb" class="idle"></div>
+        
+        <!-- Tab Navigation -->
+        <div id="tab-nav">
+            <button class="tab-btn active" data-tab="main">Hauptseite</button>
+            <button class="tab-btn" data-tab="update">Update</button>
         </div>
-        <div id="status">Verbinde...</div>
-        <div id="hint">Gemini Live · Direkte Sprachverarbeitung</div>
+        
+        <!-- Main Tab Content -->
+        <div id="main-tab" class="tab-content active">
+            <div id="orb-container">
+                <div id="orb" class="idle"></div>
+            </div>
+            <div id="status">Verbinde...</div>
+            <div id="hint">Gemini Live · Direkte Sprachverarbeitung</div>
+        </div>
+        
+        <!-- Update Tab Content -->
+        <div id="update-tab" class="tab-content">
+            <div id="update-container">
+                <h3>Update Status</h3>
+                <div id="version-info">
+                    <div class="version-item">
+                        <span class="label">Aktuelle Version:</span>
+                        <span id="current-version" class="version">1.0.0</span>
+                    </div>
+                    <div class="version-item">
+                        <span class="label">Verfügbare Version:</span>
+                        <span id="available-version" class="version">Keine</span>
+                    </div>
+                </div>
+                
+                <div id="update-status" class="status-box">
+                    <div id="update-status-text">Bereit</div>
+                </div>
+                
+                <div id="update-controls">
+                    <button id="check-update-btn" class="update-btn">Auf Updates prüfen</button>
+                    <button id="install-update-btn" class="update-btn" disabled>Update installieren</button>
+                    <button id="rollback-btn" class="update-btn danger">Rollback</button>
+                </div>
+                
+                <div id="progress-container" class="progress-container" style="display: none;">
+                    <div class="progress-label">
+                        <span id="progress-text">Download...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                </div>
+                
+                <div id="changelog-container" class="changelog-container" style="display: none;">
+                    <h4>Änderungen</h4>
+                    <div id="changelog-text"></div>
+                </div>
+                
+                <div id="backup-info" class="backup-info">
+                    <h4>Backups</h4>
+                    <div id="backup-list"></div>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="/static/main.js"></script>
 </body>

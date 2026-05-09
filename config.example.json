@@ -12,5 +12,14 @@
   "wiki_sources": {
     "fandom": ["minecraft", "starwars", "marvel"]
   },
-  "apps": ["code"]
+  "apps": ["code"],
+  "update": {
+    "auto_check": true,
+    "auto_install": false,
+    "channel": "stable",
+    "backup_count": 5,
+    "check_interval_hours": 24,
+    "notify_on_update": true,
+    "voice_announcements": true
+  }
 }

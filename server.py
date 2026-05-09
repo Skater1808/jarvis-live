@@ -466,6 +466,23 @@ async def ws_endpoint(browser_ws: WebSocket):
                                 }
                             }))
                             print("[vad] 3s silence detected, triggering response", flush=True)
+                        elif msg.get("type") == "tool_call":
+                            # Direct tool call from frontend (for update functionality)
+                            tool_name = msg.get("tool")
+                            args = msg.get("args", {})
+                            try:
+                                result = await execute_tool(tool_name, args)
+                                await browser_ws.send_json({
+                                    "type": "tool_response",
+                                    "tool_name": tool_name,
+                                    "result": result
+                                })
+                            except Exception as e:
+                                await browser_ws.send_json({
+                                    "type": "tool_response",
+                                    "tool_name": tool_name,
+                                    "result": f"Fehler: {str(e)}"
+                                })
                 except Exception as e:
                     if "disconnect message" not in str(e).lower():
                         print(f"[ws] browser_to_gemini error: {e}", flush=True)
