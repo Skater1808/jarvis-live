@@ -91,7 +91,7 @@ Antworte NUR mit dem JSON-Array, ohne Markdown-Formatierung oder Erklärungen.""
     try:
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         
@@ -143,7 +143,7 @@ Thema: """
     try:
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         return response.text.strip()

@@ -461,6 +461,27 @@ def _extract_text_from_server_content(msg: dict) -> str:
     return "".join(chunks).strip()
 
 
+async def _process_text_prompt_fallback(user_text: str, system_prompt: str) -> str:
+    """Fallback text generation when Live WebSocket text mode is unavailable."""
+    prompt = (
+        f"{system_prompt}\n\n"
+        f"Nutzeranfrage: {user_text}\n\n"
+        "Antworte als Jarvis gemaess den Regeln oben."
+    )
+    try:
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        text = (getattr(response, "text", "") or "").strip()
+        if text:
+            return text
+    except Exception as e:
+        print(f"[jarvis] Text-Fallback fehlgeschlagen: {e}", flush=True)
+    return "Ich konnte gerade keine Antwort erzeugen. Bitte versuchen Sie es erneut."
+
+
 async def process_text_prompt_for_jarvis(
     user_text: str,
     source_meta: Optional[dict[str, Any]] = None,
@@ -536,7 +557,8 @@ async def process_text_prompt_for_jarvis(
         reply_text = "Zeitueberschreitung bei der Gemini-Verbindung."
     except Exception as e:
         print(f"[jarvis] Textpfad-Fehler: {e}", flush=True)
-        reply_text = f"Fehler bei der Textverarbeitung: {e}"
+        print("[jarvis] Wechsle auf Text-Fallback ohne Live-Session.", flush=True)
+        reply_text = await _process_text_prompt_fallback(user_text, system_prompt)
 
     try:
         summary = await generate_summary(user_text, reply_text, gemini_client)

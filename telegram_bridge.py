@@ -5,6 +5,7 @@ Telegram bridge for remote Jarvis control.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -322,11 +323,24 @@ class TelegramBridge:
 
     @staticmethod
     def _convert_ogg_to_wav(ogg_path: Path, wav_path: Path) -> None:
-        from pydub import AudioSegment
-
-        audio = AudioSegment.from_file(str(ogg_path), format="ogg")
-        audio = audio.set_channels(1).set_frame_rate(16000)
-        audio.export(str(wav_path), format="wav")
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(ogg_path),
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            str(wav_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                "FFmpeg-Konvertierung fehlgeschlagen. "
+                "Bitte FFmpeg installieren und in PATH verfuegbar machen. "
+                f"Details: {result.stderr.strip()[:300]}"
+            )
 
     async def _transcribe_wav_with_gemini(self, wav_path: Path) -> str:
         if not self._gemini_client:
@@ -343,7 +357,7 @@ class TelegramBridge:
             from google.genai import types
 
             return self._gemini_client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=wav_data, mime_type="audio/wav"),
