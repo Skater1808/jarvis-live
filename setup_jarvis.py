@@ -151,6 +151,13 @@ def main():
         if fandom_raw:
             wiki_sources["fandom"] = [f.strip() for f in fandom_raw.split(",") if f.strip()]
 
+    header("Schritt 10 · Telegram Bridge (optional)")
+    print("  Steuerung von Jarvis per Telegram BotFather Bot.")
+    print("  Wenn leer, bleibt Telegram deaktiviert.")
+    print()
+    telegram_bot_token = ask("  Telegram Bot Token (optional)", required=False) or ""
+    telegram_enabled = bool(telegram_bot_token.strip())
+
     # ── Config erstellen ───────────────────────────────────────────────────
     header("Config wird erstellt...")
     workspace = os.path.dirname(os.path.abspath(__file__))
@@ -167,6 +174,14 @@ def main():
         "obsidian_inbox_path": obsidian,
         "quick_notes_path":   quick_notes_path,
         "wiki_sources":       wiki_sources,
+        "telegram": {
+            "enabled": telegram_enabled,
+            "bot_token": telegram_bot_token,
+            "allowed_user_ids": [],
+            "allowed_chat_ids": [],
+            "voice_reply": False,
+            "poll_interval_seconds": 1.0,
+        },
     }
     cfg_path = os.path.join(workspace, "config.json")
     with open(cfg_path, "w", encoding="utf-8") as f:

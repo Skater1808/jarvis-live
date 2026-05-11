@@ -99,6 +99,7 @@ var
   SpotifyTrackEdit: TEdit;
   AppsEdit: TEdit;
   QuickNotesEdit: TEdit;
+  TelegramTokenEdit: TEdit;
 
 // Hilfsfunktion zum Prüfen ob Lizenzdatei existiert
 function LicenseFileExists(): Boolean;
@@ -289,6 +290,23 @@ begin
   QuickNotesEdit.Top := Y + 16;
   QuickNotesEdit.Width := ConfigPage.Surface.Width;
   QuickNotesEdit.Text := '';
+
+  Y := Y + 48;
+
+  // Telegram Bot Token
+  LabelCtrl := TNewStaticText.Create(ConfigPage);
+  LabelCtrl.Parent := ConfigPage.Surface;
+  LabelCtrl.Left := 0;
+  LabelCtrl.Top := Y;
+  LabelCtrl.Width := ConfigPage.Surface.Width;
+  LabelCtrl.Caption := 'Telegram Bot Token (optional, leer = deaktiviert):';
+
+  TelegramTokenEdit := TEdit.Create(ConfigPage);
+  TelegramTokenEdit.Parent := ConfigPage.Surface;
+  TelegramTokenEdit.Left := 0;
+  TelegramTokenEdit.Top := Y + 16;
+  TelegramTokenEdit.Width := ConfigPage.Surface.Width;
+  TelegramTokenEdit.Text := '';
 end;
 
 // Konvertiere ComboBox-Index zu Voice-Name
@@ -348,12 +366,17 @@ var
   EscapedPath: String;
   AppsJson: String;
   EscapedNotesPath: String;
+  TelegramEnabled: String;
 begin
   ConfigPath := ExpandConstant('{app}\config.json');
   Voice := GetSelectedVoice();
   EscapedPath := EscapeBackslashes(ExpandConstant('{app}'));
   AppsJson := BuildAppsJson(AppsEdit.Text);
   EscapedNotesPath := EscapeBackslashes(QuickNotesEdit.Text);
+  if Trim(TelegramTokenEdit.Text) <> '' then
+    TelegramEnabled := 'true'
+  else
+    TelegramEnabled := 'false';
   
   ConfigContent := '{' + #13#10 +
     '  "gemini_api_key": "' + ApiKeyEdit.Text + '",' + #13#10 +
@@ -367,7 +390,15 @@ begin
     '  "apps": ' + AppsJson + ',' + #13#10 +
     '  "obsidian_inbox_path": "",' + #13#10 +
     '  "quick_notes_path": "' + EscapedNotesPath + '",' + #13#10 +
-    '  "wiki_sources": {}' + #13#10 +
+    '  "wiki_sources": {},' + #13#10 +
+    '  "telegram": {' + #13#10 +
+    '    "enabled": ' + TelegramEnabled + ',' + #13#10 +
+    '    "bot_token": "' + TelegramTokenEdit.Text + '",' + #13#10 +
+    '    "allowed_user_ids": [],' + #13#10 +
+    '    "allowed_chat_ids": [],' + #13#10 +
+    '    "voice_reply": false,' + #13#10 +
+    '    "poll_interval_seconds": 1.0' + #13#10 +
+    '  }' + #13#10 +
     '}';
   
   SaveStringToFile(ConfigPath, ConfigContent, False);

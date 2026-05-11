@@ -10,6 +10,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from typing import Any, Optional
 
 from google import genai
 import httpx
@@ -28,7 +29,14 @@ from skills import skill_registry
 
 # ── Memory System ─────────────────────────────────────────────────────────
 import memory
-from memory import init_database, get_facts_for_prompt, get_conversation_context, remember_fact, save_conversation
+from memory import (
+    init_database,
+    get_facts_for_prompt,
+    get_conversation_context,
+    remember_fact,
+    save_conversation,
+    generate_summary,
+)
 
 # ── Quick Notes System ────────────────────────────────────────────────────
 import quick_notes
@@ -62,6 +70,7 @@ CITY           = config.get("city",         "Bremen")
 TASKS_FILE     = config.get("obsidian_inbox_path", "")
 JARVIS_VOICE   = config.get("jarvis_voice", "Charon")
 # Available voices: Puck | Charon | Kore | Fenrir | Aoede
+TELEGRAM_CONFIG = config.get("telegram", {}) or {}
 
 GEMINI_LIVE_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
@@ -105,8 +114,32 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown events."""
     # Startup
     await initialize_servers()
+    app.state.telegram_bridge = None
+    telegram_enabled = bool(TELEGRAM_CONFIG.get("enabled", False))
+    telegram_token = (TELEGRAM_CONFIG.get("bot_token") or "").strip()
+    if telegram_enabled:
+        if TelegramBridge is None:
+            print(
+                f"[telegram] Bridge kann nicht geladen werden: {TELEGRAM_IMPORT_ERROR}",
+                flush=True,
+            )
+        elif not telegram_token:
+            print("[telegram] Telegram aktiviert, aber bot_token fehlt.", flush=True)
+        else:
+            try:
+                bridge = TelegramBridge(config, process_text_prompt_for_jarvis)
+                await bridge.start()
+                app.state.telegram_bridge = bridge
+            except Exception as e:
+                print(f"[telegram] Bridge-Start fehlgeschlagen: {e}", flush=True)
     yield
     # Shutdown
+    bridge = getattr(app.state, "telegram_bridge", None)
+    if bridge is not None:
+        try:
+            await bridge.stop()
+        except Exception as e:
+            print(f"[telegram] Fehler beim Bridge-Stop: {e}", flush=True)
     await mcp_client.cleanup()
     skill_registry.cleanup()
 
@@ -117,6 +150,13 @@ http = httpx.AsyncClient(timeout=30)
 
 import browser_tools
 import screen_capture
+try:
+    from telegram_bridge import TelegramBridge
+except Exception as telegram_import_error:
+    TelegramBridge = None
+    TELEGRAM_IMPORT_ERROR: Optional[Exception] = telegram_import_error
+else:
+    TELEGRAM_IMPORT_ERROR = None
 
 
 # ── Weather / Tasks ─────────────────────────────────────────────────────
@@ -378,30 +418,133 @@ async def execute_tool(name: str, args: dict) -> str:
 
 
 # ── Gemini Live Setup Message ────────────────────────────────────────────
-def build_setup_msg(system_prompt: str) -> str:
+def build_setup_msg(system_prompt: str, response_modalities: Optional[list[str]] = None) -> str:
     # Combine built-in tools with MCP tools and Skills
     skill_tools = skill_registry.get_all_tool_declarations()
     all_tools = FUNCTION_DECLARATIONS + MCP_TOOL_DECLARATIONS + skill_tools
+    if response_modalities is None:
+        response_modalities = ["AUDIO"]
+
+    generation_config: dict[str, Any] = {
+        "response_modalities": response_modalities
+    }
+    if "AUDIO" in response_modalities:
+        generation_config["speech_config"] = {
+            "voice_config": {
+                "prebuilt_voice_config": {
+                    "voice_name": JARVIS_VOICE
+                }
+            }
+        }
 
     return json.dumps({
         "setup": {
             "model": "models/gemini-2.5-flash-native-audio-preview-09-2025",
-            "generation_config": {
-                "response_modalities": ["AUDIO"],
-                "speech_config": {
-                    "voice_config": {
-                        "prebuilt_voice_config": {
-                            "voice_name": JARVIS_VOICE
-                        }
-                    }
-                },
-            },
+            "generation_config": generation_config,
             "system_instruction": {
                 "parts": [{"text": system_prompt}]
             },
             "tools": [{"function_declarations": all_tools}],
         }
     })
+
+
+def _extract_text_from_server_content(msg: dict) -> str:
+    server_content = msg.get("serverContent", {})
+    model_turn = server_content.get("modelTurn", {})
+    parts = model_turn.get("parts", [])
+    chunks = []
+    for part in parts:
+        text = part.get("text")
+        if text:
+            chunks.append(text)
+    return "".join(chunks).strip()
+
+
+async def process_text_prompt_for_jarvis(
+    user_text: str,
+    source_meta: Optional[dict[str, Any]] = None,
+) -> str:
+    """Text-only prompt path for Telegram and other remote inputs."""
+    if not user_text or not user_text.strip():
+        return "Bitte senden Sie eine gueltige Nachricht."
+
+    source = (source_meta or {}).get("source", "external")
+    print(f"[jarvis] Textanfrage von {source}: {user_text[:120]}", flush=True)
+    refresh_data()
+    system_prompt = await build_system_prompt(user_text)
+    collected_text_parts: list[str] = []
+
+    try:
+        async with websockets.connect(
+            GEMINI_LIVE_URL,
+            additional_headers={"Content-Type": "application/json"},
+            max_size=10 * 1024 * 1024,
+            ping_interval=20,
+            ping_timeout=60,
+        ) as gemini_ws:
+            await gemini_ws.send(build_setup_msg(system_prompt, response_modalities=["TEXT"]))
+            raw = await asyncio.wait_for(gemini_ws.recv(), timeout=10)
+            setup_resp = json.loads(raw)
+            if "setupComplete" not in setup_resp:
+                print(f"[jarvis] Unerwartete Setup-Antwort (Textpfad): {setup_resp}", flush=True)
+
+            await gemini_ws.send(json.dumps({
+                "client_content": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": user_text}],
+                    }],
+                    "turn_complete": True,
+                }
+            }))
+
+            for _ in range(20):
+                raw_msg = await asyncio.wait_for(gemini_ws.recv(), timeout=20)
+                msg = json.loads(raw_msg)
+
+                if "toolCall" in msg:
+                    calls = msg["toolCall"].get("functionCalls", [])
+                    responses = []
+                    for call in calls:
+                        result = await execute_tool(call["name"], call.get("args", {}))
+                        responses.append({
+                            "id": call["id"],
+                            "response": {"result": result},
+                        })
+                    await gemini_ws.send(json.dumps({
+                        "tool_response": {
+                            "function_responses": responses
+                        }
+                    }))
+                    continue
+
+                if "serverContent" in msg:
+                    text_piece = _extract_text_from_server_content(msg)
+                    if text_piece:
+                        collected_text_parts.append(text_piece)
+                    if msg["serverContent"].get("turnComplete"):
+                        break
+
+            reply_text = "\n".join(part for part in collected_text_parts if part).strip()
+            if not reply_text:
+                reply_text = (
+                    "Ich konnte gerade keine vollstaendige Textantwort erzeugen. "
+                    "Bitte versuchen Sie es erneut."
+                )
+    except asyncio.TimeoutError:
+        reply_text = "Zeitueberschreitung bei der Gemini-Verbindung."
+    except Exception as e:
+        print(f"[jarvis] Textpfad-Fehler: {e}", flush=True)
+        reply_text = f"Fehler bei der Textverarbeitung: {e}"
+
+    try:
+        summary = await generate_summary(user_text, reply_text, gemini_client)
+        await save_conversation(user_text, reply_text, summary, gemini_client)
+    except Exception as mem_err:
+        print(f"[memory] Konnte Konversation nicht speichern: {mem_err}", flush=True)
+
+    return reply_text
 
 
 # ── WebSocket endpoint ───────────────────────────────────────────────────

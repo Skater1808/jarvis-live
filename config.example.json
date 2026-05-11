@@ -25,5 +25,13 @@
     "git_remote": "origin",
     "git_branch": "main",
     "git_auto_sync": false
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "",
+    "allowed_user_ids": [],
+    "allowed_chat_ids": [],
+    "voice_reply": false,
+    "poll_interval_seconds": 1.0
   }
 }

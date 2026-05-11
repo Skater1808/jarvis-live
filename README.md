@@ -208,6 +208,60 @@ jarvis-live/
 | `mcp_servers.json` | Aktive MCP Server |
 | `mcp_servers.example.json` | Verfügbare Server-Beispiele |
 
+## Telegram-Bridge (BotFather)
+
+Jarvis kann optional remote über Telegram gesteuert werden (Text + Voice Notes).
+
+### Schritt-für-Schritt
+
+1. `@BotFather` in Telegram öffnen
+2. `/newbot` ausführen und Bot erstellen
+3. Token kopieren
+4. `config.json` anpassen:
+
+```json
+"telegram": {
+  "enabled": true,
+  "bot_token": "123456:ABCDEF...",
+  "allowed_user_ids": [123456789],
+  "allowed_chat_ids": [123456789],
+  "voice_reply": false,
+  "poll_interval_seconds": 1.0
+}
+```
+
+5. User-ID/Chat-ID ermitteln:
+   - Bot mit `/start` anschreiben
+   - Server-Logs beobachten (`[telegram] ...`)
+6. `allowed_user_ids` und `allowed_chat_ids` auf Ihre Werte setzen
+7. Server neu starten
+
+### Verfügbare Telegram-Befehle
+
+- `/start` - Bridge prüfen
+- `/help` - Hilfe anzeigen
+- `/status` - Bot-Status
+- `/note Einkaufsliste aktualisieren` - Quick Note speichern
+- `/memory` - Memory-Kurzstatistik
+- Normale Textnachrichten werden an Jarvis weitergeleitet
+- Voice-Nachrichten (`.ogg`) werden transkribiert und dann als Prompt verarbeitet
+
+### Sicherheit
+
+- Bot-Token niemals committen
+- `config.json` nicht ins Repository einchecken
+- `.gitignore` aktiv lassen und vor Commits prüfen
+- Allowlisten (`allowed_user_ids`, `allowed_chat_ids`) immer setzen
+
+### Windows-Hinweis für Voice Notes
+
+Für OGG->WAV-Konvertierung wird FFmpeg benötigt (durch `pydub` genutzt).  
+Prüfen Sie nach Installation im Terminal:
+
+```bash
+ffmpeg -version
+```
+
 ## Troubleshooting
 
 ### Kein Audio
