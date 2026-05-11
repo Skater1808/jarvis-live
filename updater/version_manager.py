@@ -26,7 +26,7 @@ class VersionManager:
         
         self.base_dir = base_dir
         self.version_file = os.path.join(base_dir, "version.json")
-        self.github_repo = "Skater1808/jarvis-live"
+        self.github_repo = "Skater1808/gemini-live-jarvis-German"
         self.github_api_url = f"https://api.github.com/repos/{self.github_repo}/releases"
         
         # Initialize Git sync
