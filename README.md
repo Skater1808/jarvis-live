@@ -208,6 +208,32 @@ jarvis-live/
 | `mcp_servers.json` | Aktive MCP Server |
 | `mcp_servers.example.json` | Verfügbare Server-Beispiele |
 
+## Jarvis‑Dev‑Personas
+
+Jarvis kann zwischen umschaltbaren Entwickler‑Rollen wechseln – jede
+mit eigenem Fokus, eigenen Leitfragen und eigenen Prioritäten:
+
+| Persona      | Fokus                                                       |
+|--------------|-------------------------------------------------------------|
+| `reviewer`   | Code‑Qualität, Wartbarkeit, Konventionen, Tests             |
+| `debugger`   | Repro, Hypothesen, minimaler Fix, Regressionstest           |
+| `tech_writer`| Zielgruppe, Struktur (TL;DR → Schritte), präzise Begriffe   |
+| `security`   | Threat Model, Authn/Authz, Input‑Validierung, Secrets       |
+
+Aktivieren in `config.json`:
+
+```json
+"dev_personas": {
+  "active": "reviewer"
+}
+```
+
+Zur Laufzeit wechseln per Sprache: „wechsle zu Debugger",
+„Persona Security", „als Tech Writer", „Persona aus".
+
+Eigene Rollen können unter `dev_personas.personas.<key>` ergänzt werden.
+Details siehe `prompts/JARVIS_DEV_PERSONAS.md`.
+
 ## Telegram-Bridge (BotFather)
 
 Jarvis kann optional remote über Telegram gesteuert werden (Text + Voice Notes).

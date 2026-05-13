@@ -42,6 +42,15 @@ from memory import (
 import quick_notes
 from quick_notes import add_quick_note
 
+# ── Dev-Personas ──────────────────────────────────────────────────────────
+import prompts as jarvis_prompts
+from prompts import (
+    build_persona_prompt,
+    get_active_persona,
+    list_personas,
+    set_active_persona,
+)
+
 # ── Config ─────────────────────────────────────────────────────────────
 # Für PyInstaller-Bundle: Config liegt im Ordner der .exe, nicht im _MEIPASS
 if getattr(sys, 'frozen', False):
@@ -71,6 +80,14 @@ TASKS_FILE     = config.get("obsidian_inbox_path", "")
 JARVIS_VOICE   = config.get("jarvis_voice", "Charon")
 # Available voices: Puck | Charon | Kore | Fenrir | Aoede
 TELEGRAM_CONFIG = config.get("telegram", {}) or {}
+
+# Dev-Personas aus Config laden (Reviewer / Debugger / Tech Writer / Security)
+_persona_state = jarvis_prompts.configure(config)
+if _persona_state.get("active"):
+    print(
+        f"[jarvis] Dev-Persona aktiv: {_persona_state['active']}",
+        flush=True,
+    )
 
 GEMINI_LIVE_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
@@ -235,6 +252,9 @@ async def build_system_prompt(user_query: str = "") -> str:
             memory_section += f"\n\nLetzte Gespräche:\n{memory_context}"
         memory_section += "\nNutze diese Informationen natuerlich, ohne explizit zu sagen 'laut meiner Datenbank...'"
 
+    persona_block = build_persona_prompt()
+    persona_section = f"\n\n=== DEV-PERSONA ===\n{persona_block}" if persona_block else ""
+
     return (
         f"Du bist Jarvis, der KI-Assistent von {USER_NAME}. "
         f"Du sprichst ausschliesslich Deutsch. "
@@ -244,7 +264,7 @@ async def build_system_prompt(user_query: str = "") -> str:
         f"Nutze trockenen Humor und gelegentliche Ironie, aber bleibe stets hilfsbereit. "
         f"Kurze Antworten, maximal 3 Saetze. Kein Markdown. "
         f"Aktuelle Zeit: {datetime.now().strftime('%H:%M')}. "
-        f"=== DATEN ==={weather}{tasks}{memory_section} === "
+        f"=== DATEN ==={weather}{tasks}{memory_section}{persona_section} === "
         f"WICHTIG: Nutze Tools NUR wenn der Nutzer sie EXPLIZIT anfordert oder es offensichtlich noetig ist. "
         f"- 'suche nach X' oder 'google X' -> search_web mit EXAKT diesem X. "
         f"- 'oeffne URL' -> open_url. "
@@ -257,6 +277,8 @@ async def build_system_prompt(user_query: str = "") -> str:
         f"- 'konvertiere...' -> calculator__convert_units. "
         f"- 'system info' / 'wie ist mein pc' -> system__get_resource_usage. "
         f"- MCP tools (z.B. 'filesystem__read_file') -> fuer Dateisystem, Datenbanken, etc. "
+        f"- 'wechsle zu <Rolle>' / 'Persona <Rolle>' / 'als <Rolle>' -> switch_dev_persona "
+        f"(Rollen: reviewer, debugger, tech_writer, security). "
         f"Antworte sonst NORMAL per Sprache, ohne Tools zu benutzen!"
     )
 
@@ -333,6 +355,28 @@ FUNCTION_DECLARATIONS = [
         },
     },
     {
+        "name": "switch_dev_persona",
+        "description": (
+            "Wechselt die aktive Jarvis-Dev-Persona (z. B. 'reviewer', "
+            "'debugger', 'tech_writer', 'security'). 'none' oder leer "
+            "deaktiviert die Persona. 'list' gibt nur die verfuegbaren "
+            "Personas zurueck, ohne zu wechseln."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "persona": {
+                    "type": "STRING",
+                    "description": (
+                        "Schluessel der gewuenschten Persona aus "
+                        "config.dev_personas.personas, oder 'none' / 'list'."
+                    )
+                }
+            },
+            "required": ["persona"],
+        },
+    },
+    {
         "name": "search_wiki",
         "description": "Durchsucht Wikipedia, Fandom und Arch Wiki nach Informationen. Nutze fuer: 'Was ist X?', 'Erklaer mir Y', 'Wiki-Suche nach Z'",
         "parameters": {
@@ -388,6 +432,32 @@ async def execute_tool(name: str, args: dict) -> str:
         elif name == "add_quick_note":
             from quick_notes import add_quick_note
             return await add_quick_note(args.get("note_text", ""), config)
+
+        elif name == "switch_dev_persona":
+            requested = (args.get("persona") or "").strip()
+            available = list_personas()
+            available_str = ", ".join(
+                f"{p['key']} ({p['name']})" for p in available
+            ) or "keine"
+            if not requested or requested.lower() == "list":
+                current = get_active_persona()
+                current_name = current["name"] if current else "keine"
+                return (
+                    f"Aktive Persona: {current_name}. "
+                    f"Verfuegbar: {available_str}."
+                )
+            if requested.lower() in {"none", "off", "aus", "keine"}:
+                set_active_persona(None)
+                return "Dev-Persona deaktiviert."
+            try:
+                active = set_active_persona(requested)
+            except KeyError:
+                return (
+                    f"Unbekannte Persona '{requested}'. "
+                    f"Verfuegbar: {available_str}."
+                )
+            name_str = active["name"] if active else requested
+            return f"Persona gewechselt zu {name_str}."
 
         elif name == "search_wiki":
             try:
