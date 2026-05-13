@@ -72,6 +72,35 @@ JARVIS_VOICE   = config.get("jarvis_voice", "Charon")
 # Available voices: Puck | Charon | Kore | Fenrir | Aoede
 TELEGRAM_CONFIG = config.get("telegram", {}) or {}
 
+# ── Dev-Personas ─────────────────────────────────────────────────────────
+# Personas werden in config.json definiert (siehe config.example.json).
+# Jede Persona kann Prompt-Overlay und optional eine eigene Stimme setzen.
+# Wechsel via Tool `switch_persona` (wirkt ab der naechsten Session/Anfrage)
+# oder manuell durch Anpassen von `active_persona` in config.json + Neustart.
+PERSONAS: dict[str, dict[str, Any]] = config.get("personas", {}) or {}
+ACTIVE_PERSONA: str = config.get("active_persona", "default") or "default"
+
+
+def _get_persona(name: str) -> dict[str, Any]:
+    """Hole Persona-Definition; gibt leeres Dict zurueck, wenn unbekannt."""
+    persona = PERSONAS.get(name)
+    if isinstance(persona, dict):
+        return persona
+    return {}
+
+
+def get_active_persona_prompt() -> str:
+    """Zusatz-Prompt der aktuell aktiven Persona (kann leer sein)."""
+    return str(_get_persona(ACTIVE_PERSONA).get("prompt", "") or "").strip()
+
+
+def get_active_voice() -> str:
+    """Stimme der aktiven Persona, sonst globale Standardstimme."""
+    persona_voice = _get_persona(ACTIVE_PERSONA).get("voice")
+    if isinstance(persona_voice, str) and persona_voice.strip():
+        return persona_voice.strip()
+    return JARVIS_VOICE
+
 GEMINI_LIVE_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1beta."
@@ -88,7 +117,15 @@ MCP_TOOL_DECLARATIONS = []
 async def initialize_servers():
     """Initialize all servers including MCP and Skills."""
     global MCP_TOOL_DECLARATIONS
-    
+
+    if PERSONAS:
+        active_name = _get_persona(ACTIVE_PERSONA).get("name", ACTIVE_PERSONA)
+        print(
+            f"[jarvis] Personas geladen: {len(PERSONAS)} "
+            f"(aktiv: {ACTIVE_PERSONA} / {active_name})",
+            flush=True,
+        )
+
     # Initialize MCP
     await mcp_client.initialize_mcp()
     MCP_TOOL_DECLARATIONS = mcp_client.get_mcp_tools()
@@ -235,6 +272,9 @@ async def build_system_prompt(user_query: str = "") -> str:
             memory_section += f"\n\nLetzte Gespräche:\n{memory_context}"
         memory_section += "\nNutze diese Informationen natuerlich, ohne explizit zu sagen 'laut meiner Datenbank...'"
 
+    persona_prompt = get_active_persona_prompt()
+    persona_section = f" {persona_prompt} " if persona_prompt else ""
+
     return (
         f"Du bist Jarvis, der KI-Assistent von {USER_NAME}. "
         f"Du sprichst ausschliesslich Deutsch. "
@@ -244,6 +284,7 @@ async def build_system_prompt(user_query: str = "") -> str:
         f"Nutze trockenen Humor und gelegentliche Ironie, aber bleibe stets hilfsbereit. "
         f"Kurze Antworten, maximal 3 Saetze. Kein Markdown. "
         f"Aktuelle Zeit: {datetime.now().strftime('%H:%M')}. "
+        f"{persona_section}"
         f"=== DATEN ==={weather}{tasks}{memory_section} === "
         f"WICHTIG: Nutze Tools NUR wenn der Nutzer sie EXPLIZIT anfordert oder es offensichtlich noetig ist. "
         f"- 'suche nach X' oder 'google X' -> search_web mit EXAKT diesem X. "
@@ -256,6 +297,8 @@ async def build_system_prompt(user_query: str = "") -> str:
         f"- 'rechne...' / 'wie viel ist...' -> calculator__calculate. "
         f"- 'konvertiere...' -> calculator__convert_units. "
         f"- 'system info' / 'wie ist mein pc' -> system__get_resource_usage. "
+        f"- 'welche Personas/Rollen hast du?' -> list_personas. "
+        f"- 'wechsle zur X-Persona' / 'sei jetzt X' / 'wir debuggen jetzt' / 'mach jetzt Security-Review' -> switch_persona mit passendem Schluessel (reviewer, debugger, tech_writer, security, default). "
         f"- MCP tools (z.B. 'filesystem__read_file') -> fuer Dateisystem, Datenbanken, etc. "
         f"Antworte sonst NORMAL per Sprache, ohne Tools zu benutzen!"
     )
@@ -351,7 +394,78 @@ FUNCTION_DECLARATIONS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "list_personas",
+        "description": "Listet die in config.json definierten Dev-Personas (z.B. reviewer, debugger, tech_writer, security) und zeigt die aktive Persona an. Nutze bei Fragen wie 'welche Personas hast du?' oder 'welche Rollen kannst du?'.",
+        "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
+        "name": "switch_persona",
+        "description": "Wechselt die aktive Dev-Persona (z.B. 'reviewer', 'debugger', 'tech_writer', 'security', 'default'). Aenderung wirkt fuer Telegram sofort und fuer die Voice-Session ab der naechsten Verbindung/Reload. Nutze bei 'wechsle zur Reviewer-Persona', 'sei jetzt Security-Auditor', 'wir debuggen jetzt', 'zurueck zum Butler'.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "persona": {
+                    "type": "STRING",
+                    "description": "Schluessel der Ziel-Persona aus config.json (z.B. reviewer, debugger, tech_writer, security, default)."
+                },
+                "persist": {
+                    "type": "BOOLEAN",
+                    "description": "Wenn true, wird die Aenderung in config.json gespeichert (sonst nur im Speicher bis Neustart). Default: false."
+                }
+            },
+            "required": ["persona"],
+        },
+    },
 ]
+
+
+# ── Persona Helpers (Tools) ──────────────────────────────────────────────
+def _list_personas_text() -> str:
+    """Menschenlesbare Zusammenfassung der konfigurierten Personas."""
+    if not PERSONAS:
+        return "Keine Personas in config.json definiert."
+    lines = [f"Aktive Persona: {ACTIVE_PERSONA}", "Verfuegbare Personas:"]
+    for key, persona in PERSONAS.items():
+        if not isinstance(persona, dict):
+            continue
+        name = persona.get("name", key)
+        desc = persona.get("description", "")
+        marker = " (aktiv)" if key == ACTIVE_PERSONA else ""
+        lines.append(f"- {key}: {name}{marker} - {desc}".rstrip(" -"))
+    return "\n".join(lines)
+
+
+def _switch_persona(persona_key: str, persist: bool = False) -> str:
+    """Wechselt die aktive Persona im Speicher; optional persistent in config.json."""
+    global ACTIVE_PERSONA
+    key = (persona_key or "").strip()
+    if not key:
+        return "Bitte gib einen Persona-Schluessel an (z.B. reviewer, debugger, tech_writer, security)."
+    if key not in PERSONAS:
+        available = ", ".join(PERSONAS.keys()) or "(keine)"
+        return f"Persona '{key}' unbekannt. Verfuegbar: {available}."
+
+    ACTIVE_PERSONA = key
+    config["active_persona"] = key
+    persona = _get_persona(key)
+    display = persona.get("name", key)
+
+    if persist:
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as cfg_file:
+                json.dump(config, cfg_file, ensure_ascii=False, indent=2)
+            note = " Persistiert in config.json."
+        except Exception as exc:
+            note = f" Konnte nicht in config.json schreiben: {exc}"
+    else:
+        note = " (nur fuer diese Laufzeit; fuer dauerhaft 'persist=true' setzen oder config.json editieren)"
+
+    return (
+        f"Persona gewechselt zu '{display}' ({key})."
+        f" Aenderung gilt sofort fuer Telegram-Anfragen;"
+        f" fuer die Voice-Session ab der naechsten Verbindung/Reload.{note}"
+    )
 
 
 # ── Tool Execution ───────────────────────────────────────────────────────
@@ -404,6 +518,15 @@ async def execute_tool(name: str, args: dict) -> str:
             except Exception as wiki_err:
                 return f"Sir, die Wiki-Suche ist momentan nicht verfügbar: {wiki_err}"
 
+        elif name == "list_personas":
+            return _list_personas_text()
+
+        elif name == "switch_persona":
+            return _switch_persona(
+                args.get("persona", ""),
+                bool(args.get("persist", False)),
+            )
+
         # MCP tools (prefixed with server name)
         elif mcp_client.is_mcp_tool(name):
             return await mcp_client.execute_mcp_tool(name, args)
@@ -432,7 +555,7 @@ def build_setup_msg(system_prompt: str, response_modalities: Optional[list[str]]
         generation_config["speech_config"] = {
             "voice_config": {
                 "prebuilt_voice_config": {
-                    "voice_name": JARVIS_VOICE
+                    "voice_name": get_active_voice()
                 }
             }
         }
