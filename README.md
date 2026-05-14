@@ -145,6 +145,55 @@ Jarvis unterstützt MCP (Model Context Protocol) Server für erweiterte Funktion
 - `get_news()` — Aktuelle Nachrichten
 - `remember_fact(category, fact)` — Fakt im Langzeitgedächtnis speichern
 - `add_quick_note(note)` — Schnelle Notiz speichern
+- `list_personas()` — Verfügbare Dev-Personas auflisten
+- `switch_persona(persona, persist?)` — Aktive Dev-Persona wechseln
+
+### Dev-Personas
+
+Jarvis kann zwischen Rollen wechseln, damit du nicht immer dieselbe KI-Perspektive bekommst. Jede Persona bringt eigene Prioritäten, Fragen und einen eigenen Output-Stil mit.
+
+Mitgelieferte Personas (in `config.json` definiert):
+
+| Schlüssel | Rolle | Fokus |
+|-----------|-------|-------|
+| `default` | Standard-Butler | Klassischer Jarvis mit britischem Understatement |
+| `reviewer` | Code Reviewer | Lesbarkeit, Konventionen, Tests, Top-3-Findings |
+| `debugger` | Debugger | Ursache statt Symptom, Hypothesen, Repro-Schritte |
+| `tech_writer` | Tech Writer | Zielgruppe, Struktur, Beispiele, Tutorials |
+| `security` | Security Auditor | Threat-Modell, Angriffsfläche, Mitigationen, Schweregrad |
+
+#### Aktive Persona setzen (config.json)
+
+```json
+{
+  "active_persona": "reviewer",
+  "personas": {
+    "reviewer": {
+      "name": "Code Reviewer",
+      "description": "Prüft Code, Diffs und PRs",
+      "voice": null,
+      "prompt": "=== PERSONA: CODE REVIEWER === ..."
+    }
+  }
+}
+```
+
+- `active_persona`: Schlüssel der beim Start aktiven Persona.
+- `personas.<key>.prompt`: Wird zusätzlich zum Basis-Prompt injiziert. Leer = keine Überlagerung (für `default`).
+- `personas.<key>.voice`: Optional, überschreibt `jarvis_voice` für diese Persona (`Puck`, `Charon`, `Kore`, `Fenrir`, `Aoede`).
+- `personas.<key>.name` / `description`: Werden in `list_personas` angezeigt.
+
+Eigene Personas einfach als neuen Eintrag unter `personas` hinzufügen.
+
+#### Persona per Sprache wechseln
+
+- "Welche Personas hast du?" → `list_personas`
+- "Wechsle zur Reviewer-Persona", "Sei jetzt Security-Auditor", "Wir debuggen jetzt", "Zurück zum Butler" → `switch_persona`
+
+Hinweise:
+- Für Telegram-Text-Anfragen wirkt der Wechsel **sofort** (Setup wird pro Anfrage neu gesendet).
+- Für die Voice-Session wirkt der Wechsel ab der **nächsten Verbindung / Reload**, da Gemini Live die `system_instruction` und Stimme nur beim Setup übernimmt.
+- Standardmäßig ist der Wechsel **nur im Speicher**. Für persistenten Wechsel `switch_persona` mit `persist=true` aufrufen ("merke das dauerhaft") oder `active_persona` in `config.json` manuell anpassen.
 
 ### Memory Features
 
