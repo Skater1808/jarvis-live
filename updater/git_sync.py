@@ -7,7 +7,34 @@ Handles checking for repository changes and syncing with remote Git repository.
 import os
 import subprocess
 import json
+import time
 from datetime import datetime
+
+# #region agent log
+def _agent_dbg(location, message, data, hypothesis_id=""):
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _p = os.path.join(_root, "debug-629b8b.log")
+        with open(_p, "a", encoding="utf-8") as _f:
+            _f.write(
+                json.dumps(
+                    {
+                        "sessionId": "629b8b",
+                        "timestamp": int(time.time() * 1000),
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "hypothesisId": hypothesis_id,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+
+
+# #endregion
 
 class GitSync:
     """Handles Git repository synchronization and change detection."""
@@ -189,7 +216,26 @@ class GitSync:
         try:
             # Stash any local changes first
             stash_result = self._run_git_command(['stash', 'push', '-m', 'Auto-update stash'])
-            
+            # #region agent log
+            _had_real_stash = (
+                stash_result.returncode == 0
+                and stash_result.stdout
+                and "No local changes" not in stash_result.stdout
+            )
+            _agent_dbg(
+                "git_sync.py:pull_changes",
+                "after_stash",
+                {
+                    "stash_rc": stash_result.returncode,
+                    "had_real_stash": _had_real_stash,
+                    "stash_stdout_has_no_local": (
+                        "No local changes" in (stash_result.stdout or "")
+                    ),
+                },
+                "H6",
+            )
+            # #endregion
+
             # Pull changes
             pull_result = self._run_git_command(['pull', remote, branch])
             
@@ -199,10 +245,35 @@ class GitSync:
                 # Try to restore stashed changes if any
                 if stash_result.returncode == 0 and 'No local changes' not in stash_result.stdout:
                     self._run_git_command(['stash', 'pop'])
-                
+                # #region agent log
+                _agent_dbg(
+                    "git_sync.py:pull_changes",
+                    "pull_ok",
+                    {"popped_after_success": _had_real_stash},
+                    "H6",
+                )
+                # #endregion
+
                 return True
             else:
                 print(f"[git_sync] Pull failed: {pull_result.stderr}")
+                # #region agent log
+                _restored_on_fail = False
+                if _had_real_stash:
+                    _pop_r = self._run_git_command(["stash", "pop"])
+                    _restored_on_fail = _pop_r.returncode == 0
+                _agent_dbg(
+                    "git_sync.py:pull_changes",
+                    "pull_failed_after_restore_attempt",
+                    {
+                        "pull_rc": pull_result.returncode,
+                        "had_real_stash": _had_real_stash,
+                        "restored_stash_on_pull_fail": _restored_on_fail,
+                    },
+                    "H6",
+                )
+                # #endregion
+
                 return False
                 
         except Exception as e:

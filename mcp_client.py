@@ -412,5 +412,10 @@ async def cleanup():
     """Global cleanup function for lifespan shutdown."""
     global _mcp_manager
     if _mcp_manager is not None:
-        await _mcp_manager.cleanup()
-        _mcp_manager = None
+        try:
+            await _mcp_manager.cleanup()
+        except Exception as e:
+            # Ignore cleanup errors to prevent shutdown issues
+            print(f"[mcp] Cleanup error (ignoring): {e}", flush=True)
+        finally:
+            _mcp_manager = None

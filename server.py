@@ -491,80 +491,36 @@ async def process_text_prompt_for_jarvis(
         return "Bitte senden Sie eine gueltige Nachricht."
 
     source = (source_meta or {}).get("source", "external")
-    print(f"[jarvis] Textanfrage von {source}: {user_text[:120]}", flush=True)
+    
+    # Show Telegram messages in terminal
+    if source == "telegram":
+        username = (source_meta or {}).get("username", "Unknown")
+        print(f"\n[telegram] 📩 Nachricht von @{username}: {user_text}", flush=True)
+    else:
+        print(f"[jarvis] Textanfrage von {source}: {user_text[:120]}", flush=True)
+    
     refresh_data()
     system_prompt = await build_system_prompt(user_text)
     collected_text_parts: list[str] = []
 
     try:
-        async with websockets.connect(
-            GEMINI_LIVE_URL,
-            additional_headers={"Content-Type": "application/json"},
-            max_size=10 * 1024 * 1024,
-            ping_interval=20,
-            ping_timeout=60,
-        ) as gemini_ws:
-            await gemini_ws.send(build_setup_msg(system_prompt, response_modalities=["TEXT"]))
-            raw = await asyncio.wait_for(gemini_ws.recv(), timeout=10)
-            setup_resp = json.loads(raw)
-            if "setupComplete" not in setup_resp:
-                print(f"[jarvis] Unerwartete Setup-Antwort (Textpfad): {setup_resp}", flush=True)
-
-            await gemini_ws.send(json.dumps({
-                "client_content": {
-                    "turns": [{
-                        "role": "user",
-                        "parts": [{"text": user_text}],
-                    }],
-                    "turn_complete": True,
-                }
-            }))
-
-            for _ in range(20):
-                raw_msg = await asyncio.wait_for(gemini_ws.recv(), timeout=20)
-                msg = json.loads(raw_msg)
-
-                if "toolCall" in msg:
-                    calls = msg["toolCall"].get("functionCalls", [])
-                    responses = []
-                    for call in calls:
-                        result = await execute_tool(call["name"], call.get("args", {}))
-                        responses.append({
-                            "id": call["id"],
-                            "response": {"result": result},
-                        })
-                    await gemini_ws.send(json.dumps({
-                        "tool_response": {
-                            "function_responses": responses
-                        }
-                    }))
-                    continue
-
-                if "serverContent" in msg:
-                    text_piece = _extract_text_from_server_content(msg)
-                    if text_piece:
-                        collected_text_parts.append(text_piece)
-                    if msg["serverContent"].get("turnComplete"):
-                        break
-
-            reply_text = "\n".join(part for part in collected_text_parts if part).strip()
-            if not reply_text:
-                reply_text = (
-                    "Ich konnte gerade keine vollstaendige Textantwort erzeugen. "
-                    "Bitte versuchen Sie es erneut."
-                )
-    except asyncio.TimeoutError:
-        reply_text = "Zeitueberschreitung bei der Gemini-Verbindung."
+        # Use direct text model instead of Live API to avoid WebSocket errors
+        reply_text = await _process_text_prompt_fallback(user_text, system_prompt + " Antowrte kurz wie ein telegramm user.")
     except Exception as e:
-        print(f"[jarvis] Textpfad-Fehler: {e}", flush=True)
-        print("[jarvis] Wechsle auf Text-Fallback ohne Live-Session.", flush=True)
-        reply_text = await _process_text_prompt_fallback(user_text, system_prompt)
+        print(f"[jarvis] Text-Modell Fehler: {e}", flush=True)
+        reply_text = "Ich konnte gerade keine Antwort erzeugen. Bitte versuchen Sie es erneut."
 
     try:
         summary = await generate_summary(user_text, reply_text, gemini_client)
         await save_conversation(user_text, reply_text, summary, gemini_client)
     except Exception as mem_err:
         print(f"[memory] Konnte Konversation nicht speichern: {mem_err}", flush=True)
+
+    # Show Jarvis response in terminal for Telegram messages
+    source = (source_meta or {}).get("source", "external")
+    if source == "telegram":
+        username = (source_meta or {}).get("username", "Unknown")
+        print(f"[telegram] 🤖 Jarvis an @{username}: {reply_text}\n", flush=True)
 
     return reply_text
 

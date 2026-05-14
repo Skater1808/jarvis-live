@@ -323,8 +323,34 @@ class TelegramBridge:
 
     @staticmethod
     def _convert_ogg_to_wav(ogg_path: Path, wav_path: Path) -> None:
+        # Try multiple possible FFmpeg paths
+        ffmpeg_paths = [
+            "ffmpeg",  # Try system PATH first
+            r"C:\Program Files\FFmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files (x86)\FFmpeg\bin\ffmpeg.exe",
+            r"C:\Users\Emil\AppData\Local\Microsoft\WinGet\packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe",
+        ]
+        
+        ffmpeg_cmd = None
+        for path in ffmpeg_paths:
+            try:
+                # Test if ffmpeg exists at this path
+                test_result = subprocess.run([path, "-version"], 
+                                           capture_output=True, text=True, timeout=5)
+                if test_result.returncode == 0:
+                    ffmpeg_cmd = path
+                    break
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                continue
+        
+        if not ffmpeg_cmd:
+            raise RuntimeError(
+                "FFmpeg nicht gefunden. Bitte installieren Sie FFmpeg und stellen Sie sicher, "
+                "dass es im PATH verfuegbar ist oder unter C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe"
+            )
+        
         cmd = [
-            "ffmpeg",
+            ffmpeg_cmd,
             "-y",
             "-i",
             str(ogg_path),
@@ -337,8 +363,7 @@ class TelegramBridge:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(
-                "FFmpeg-Konvertierung fehlgeschlagen. "
-                "Bitte FFmpeg installieren und in PATH verfuegbar machen. "
+                f"FFmpeg-Konvertierung fehlgeschlagen mit {ffmpeg_cmd}. "
                 f"Details: {result.stderr.strip()[:300]}"
             )
 
