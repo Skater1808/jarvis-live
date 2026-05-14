@@ -66,5 +66,22 @@
     "allowed_chat_ids": [],
     "voice_reply": false,
     "poll_interval_seconds": 1.0
+  },
+  "sip": {
+    "enabled": false,
+    "server": "sip.example.com",
+    "port": 5060,
+    "username": "jarvis",
+    "password": "REPLACE_WITH_SIP_PASSWORD",
+    "domain": "sip.example.com",
+    "transport": "udp",
+    "display_name": "Jarvis",
+    "user_agent": "Jarvis-SIP/1.0",
+    "register_expires": 600
+  },
+  "contacts": {
+    "Mama": "+49123456789",
+    "Papa": "+49123456790",
+    "Arbeit": "+49123456791"
   }
 }

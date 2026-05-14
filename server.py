@@ -42,6 +42,10 @@ from memory import (
 import quick_notes
 from quick_notes import add_quick_note
 
+# ── SIP / VoIP ----------──────────────────────────────────────────────────
+import call_history
+from sip_client import SIPClient, SIPConfig
+
 # ── Config ─────────────────────────────────────────────────────────────
 # Für PyInstaller-Bundle: Config liegt im Ordner der .exe, nicht im _MEIPASS
 if getattr(sys, 'frozen', False):
@@ -71,6 +75,10 @@ TASKS_FILE     = config.get("obsidian_inbox_path", "")
 JARVIS_VOICE   = config.get("jarvis_voice", "Charon")
 # Available voices: Puck | Charon | Kore | Fenrir | Aoede
 TELEGRAM_CONFIG = config.get("telegram", {}) or {}
+
+# ── SIP / VoIP ─────────────────────────────────────────────────────────
+SIP_CONFIG = SIPConfig.from_config(config)
+sip_client: Optional[SIPClient] = None
 
 # ── Dev-Personas ─────────────────────────────────────────────────────────
 # Personas werden in config.json definiert (siehe config.example.json).
@@ -126,6 +134,19 @@ async def initialize_servers():
             flush=True,
         )
 
+    # SIP / VoIP
+    global sip_client
+    if SIP_CONFIG.enabled:
+        try:
+            call_history.init_database()
+            sip_client = SIPClient(SIP_CONFIG, on_history=call_history.record_call)
+            await sip_client.start()
+        except Exception as e:
+            print(f"[jarvis] WARNUNG: SIP-Init fehlgeschlagen: {e}", flush=True)
+            sip_client = None
+    else:
+        print("[jarvis] SIP deaktiviert (config.sip.enabled=false)", flush=True)
+
     # Initialize MCP
     await mcp_client.initialize_mcp()
     MCP_TOOL_DECLARATIONS = mcp_client.get_mcp_tools()
@@ -177,6 +198,11 @@ async def lifespan(app: FastAPI):
             await bridge.stop()
         except Exception as e:
             print(f"[telegram] Fehler beim Bridge-Stop: {e}", flush=True)
+    if sip_client is not None:
+        try:
+            await sip_client.stop()
+        except Exception as e:
+            print(f"[sip] Fehler beim Stop: {e}", flush=True)
     await mcp_client.cleanup()
     skill_registry.cleanup()
 
@@ -299,6 +325,10 @@ async def build_system_prompt(user_query: str = "") -> str:
         f"- 'system info' / 'wie ist mein pc' -> system__get_resource_usage. "
         f"- 'welche Personas/Rollen hast du?' -> list_personas. "
         f"- 'wechsle zur X-Persona' / 'sei jetzt X' / 'wir debuggen jetzt' / 'mach jetzt Security-Review' -> switch_persona mit passendem Schluessel (reviewer, debugger, tech_writer, security, default). "
+        f"- 'rufe X an' / 'telefoniere mit Y' -> make_call mit contact_name (Lookup in config.contacts) oder direkter phone_number. "
+        f"- 'leg auf' / 'beende den Anruf' -> hangup_call. "
+        f"- 'bist du eingeloggt?' / 'laeuft ein Anruf?' -> call_status. "
+        f"- 'zeige meine Anrufe' / 'letzte Telefonate' -> list_recent_calls. "
         f"- MCP tools (z.B. 'filesystem__read_file') -> fuer Dateisystem, Datenbanken, etc. "
         f"Antworte sonst NORMAL per Sprache, ohne Tools zu benutzen!"
     )
@@ -417,6 +447,48 @@ FUNCTION_DECLARATIONS = [
             "required": ["persona"],
         },
     },
+    {
+        "name": "make_call",
+        "description": "Telefonanruf via SIP/VoIP taetigen. Nutze fuer: 'rufe X an', 'telefoniere mit Y', 'ruf bei Z an'. Kontakte werden aus config.contacts geladen (Fuzzy-Match auf Namen). Alternativ direkte Nummer ueber 'phone_number' moeglich.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "contact_name": {
+                    "type": "STRING",
+                    "description": "Name des Kontakts aus config.contacts (z.B. 'Mama', 'Papa', 'Arbeit'). Case-insensitive mit Fuzzy-Match."
+                },
+                "phone_number": {
+                    "type": "STRING",
+                    "description": "Direkte Telefonnummer oder SIP-URI (z.B. '+49123456789' oder 'sip:alice@example.com'). Wird verwendet wenn contact_name nicht gefunden wird."
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "hangup_call",
+        "description": "Beendet den aktuell laufenden Telefonanruf. Nutze fuer: 'leg auf', 'beende den Anruf', 'haeng auf'.",
+        "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
+        "name": "call_status",
+        "description": "Status des SIP-Clients und des aktuellen Anrufs (registriert? aktiver Anruf?). Nutze fuer: 'bist du eingeloggt?', 'laeuft gerade ein Anruf?'.",
+        "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
+        "name": "list_recent_calls",
+        "description": "Zeigt die letzten Telefonanrufe aus der Historie. Nutze fuer: 'zeige meine Anrufe', 'letzte Telefonate', 'Anruf-Historie'.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Anzahl der anzuzeigenden Anrufe (1-100, Default 10)."
+                }
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -502,6 +574,55 @@ async def execute_tool(name: str, args: dict) -> str:
         elif name == "add_quick_note":
             from quick_notes import add_quick_note
             return await add_quick_note(args.get("note_text", ""), config)
+
+        elif name == "make_call":
+            if sip_client is None:
+                return (
+                    "SIP ist deaktiviert. Setzen Sie 'sip.enabled' auf true "
+                    "in config.json und starten Sie neu, Sir."
+                )
+            result = await sip_client.make_call(
+                contact_name=args.get("contact_name", "") or "",
+                phone_number=args.get("phone_number", "") or "",
+            )
+            if result.get("ok"):
+                who = result.get("contact_name") or result.get("target", "")
+                return f"Anruf zu {who} aufgebaut. Status: {result.get('state')}."
+            return f"Anruf fehlgeschlagen: {result.get('error', 'unbekannt')}."
+
+        elif name == "hangup_call":
+            if sip_client is None:
+                return "SIP ist deaktiviert, Sir."
+            result = await sip_client.hangup()
+            if result.get("ok"):
+                return "Anruf beendet."
+            return result.get("error", "Konnte Anruf nicht beenden.")
+
+        elif name == "call_status":
+            if sip_client is None:
+                return "SIP ist deaktiviert (config.sip.enabled=false)."
+            status = sip_client.get_status()
+            registered = "ja" if status.get("registered") else "nein"
+            active = status.get("active_call")
+            if active:
+                target = active.get("contact_name") or active.get("target", "")
+                return (
+                    f"Registriert: {registered}. Aktiver Anruf mit {target} "
+                    f"({active.get('state')})."
+                )
+            contacts = status.get("contacts") or []
+            ctx = (
+                f" Bekannte Kontakte: {', '.join(contacts)}." if contacts else ""
+            )
+            return f"Registriert: {registered}. Kein aktiver Anruf.{ctx}"
+
+        elif name == "list_recent_calls":
+            try:
+                limit = int(args.get("limit") or 10)
+            except (TypeError, ValueError):
+                limit = 10
+            calls = await call_history.list_recent_calls(limit=limit)
+            return call_history.format_calls_for_voice(calls)
 
         elif name == "search_wiki":
             try:

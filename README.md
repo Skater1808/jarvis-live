@@ -257,6 +257,54 @@ jarvis-live/
 | `mcp_servers.json` | Aktive MCP Server |
 | `mcp_servers.example.json` | Verfügbare Server-Beispiele |
 
+## SIP / VoIP — Telefonanrufe
+
+Jarvis kann via SIP telefonieren. Die komplette SIP-Logik ist als
+eigenständiger Pure-Python-Stack in `sip_client.py` implementiert
+(REGISTER mit Digest-Auth, INVITE, ACK, BYE, CANCEL) — keine
+`pjsip`/`python-sipsimple`-Abhängigkeit.
+
+### Aktivieren
+
+In `config.json` (Vorlage in `config.example.json`):
+
+```json
+"sip": {
+  "enabled": true,
+  "server": "sip.example.com",
+  "port": 5060,
+  "username": "jarvis",
+  "password": "REPLACE_WITH_SIP_PASSWORD",
+  "domain": "sip.example.com",
+  "transport": "udp",
+  "display_name": "Jarvis",
+  "user_agent": "Jarvis-SIP/1.0",
+  "register_expires": 600
+},
+"contacts": {
+  "Mama": "+49123456789",
+  "Papa": "+49123456790",
+  "Arbeit": "+49123456791"
+}
+```
+
+### Sprachbefehle
+
+- „Jarvis, rufe Mama an" → `make_call`
+- „Jarvis, ruf +49 30 12345 an" → `make_call` mit direkter Nummer
+- „Jarvis, leg auf" → `hangup_call`
+- „Jarvis, bist du eingeloggt?" → `call_status`
+- „Jarvis, zeige meine letzten Anrufe" → `list_recent_calls`
+
+Kontakte werden case-insensitive mit Fuzzy-Match aufgelöst („Mam" findet
+„Mama"). Jeder Anruf wird in `jarvis_calls.db` geloggt (Kontakt, Status,
+Dauer).
+
+**Audio (RTP) ist noch nicht angeschlossen** (Phase 5 im Spec). Die
+SDP-Aushandlung läuft korrekt, das Mikrofon-/Speaker-Routing während
+des Anrufs ist als nächster Schritt vorgesehen. Details und Phase-Plan
+in [`docs/SIP.md`](docs/SIP.md).
+
 ## Telegram-Bridge (BotFather)
 
 Jarvis kann optional remote über Telegram gesteuert werden (Text + Voice Notes).
